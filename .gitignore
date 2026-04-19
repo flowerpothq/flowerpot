@@ -1,4 +1,5 @@
 bin/
+/flowerpot
 .flowerpot/
 *.db
 *.db-wal
