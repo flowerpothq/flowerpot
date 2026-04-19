@@ -1,0 +1,11 @@
+schedule: "0 * * * *"
+
+warehouses:
+  db:
+    driver: mysql
+    dsn: "mysql://localhost:3306/test"
+
+pipelines:
+  query:
+    sql: ./query.sql
+    warehouse: db

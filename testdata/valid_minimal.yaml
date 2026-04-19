@@ -1,0 +1,5 @@
+schedule: "0 * * * *"
+
+pipelines:
+  hello:
+    run: "echo hello"

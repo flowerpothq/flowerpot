@@ -1,0 +1,11 @@
+schedule: "0 * * * *"
+
+warehouses:
+  analytics:
+    driver: duckdb
+    dsn: ./test.db
+
+pipelines:
+  query:
+    sql: ./query.sql
+    warehouse: nonexistent

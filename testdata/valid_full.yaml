@@ -1,0 +1,47 @@
+schedule: "0 */6 * * *"
+timezone: "America/New_York"
+overlap: queue
+catchup: true
+max_concurrent: 8
+default_timeout: "30m"
+default_retry:
+  attempts: 3
+  delay: "5m"
+
+settings:
+  env: production
+
+warehouses:
+  analytics:
+    driver: duckdb
+    dsn: ./data/analytics.duckdb
+  main_db:
+    driver: postgres
+    dsn: "postgres://localhost:5432/flowerpot"
+
+pipelines:
+  extract:
+    run: "python scripts/extract.py"
+    timeout: "10m"
+    retry:
+      attempts: 2
+      delay: "1m"
+    env:
+      API_KEY: "${API_KEY}"
+    cwd: ./pipelines
+
+  load:
+    sql: ./sql/load.sql
+    warehouse: analytics
+    after: [extract]
+    transaction: true
+
+  transform:
+    sql: ./sql/transform.sql
+    warehouse: analytics
+    after: [load]
+
+  notify:
+    run: "curl -X POST https://hooks.example.com/done"
+    after: [transform]
+    timeout: "2m"

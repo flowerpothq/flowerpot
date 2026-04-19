@@ -1,0 +1,6 @@
+bin/
+.flowerpot/
+*.db
+*.db-wal
+*.db-shm
+dist/

@@ -1,0 +1,9 @@
+schedule: "0 * * * *"
+
+pipelines:
+  step-a:
+    run: "echo a"
+    after: [step-b]
+  step-b:
+    run: "echo b"
+    after: [step-a]

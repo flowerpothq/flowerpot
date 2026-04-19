@@ -1,0 +1,11 @@
+schedule: "0 * * * *"
+
+warehouses:
+  db:
+    driver: duckdb
+    dsn: ./test.db
+
+pipelines:
+  query:
+    sql: ./does_not_exist.sql
+    warehouse: db

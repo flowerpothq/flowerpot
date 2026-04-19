@@ -1,0 +1,12 @@
+schedule: "0 * * * *"
+
+warehouses:
+  db:
+    driver: duckdb
+    dsn: ./test.db
+
+pipelines:
+  bad-pipeline:
+    run: "echo hello"
+    sql: ./query.sql
+    warehouse: db

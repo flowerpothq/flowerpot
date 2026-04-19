@@ -1,0 +1,6 @@
+schedule: "0 * * * *"
+
+pipelines:
+  step-a:
+    run: "echo a"
+    after: [nonexistent-pipeline]

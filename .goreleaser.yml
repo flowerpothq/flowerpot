@@ -1,0 +1,34 @@
+version: 2
+
+builds:
+  - main: ./cmd/flowerpot
+    binary: flowerpot
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: flowerpothq
+    name: flowerpot
+
+brews:
+  - repository:
+      owner: flowerpothq
+      name: homebrew-tap
+    homepage: https://getflowerpot.dev
+    description: A lightweight data pipeline scheduler
