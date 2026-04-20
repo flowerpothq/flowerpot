@@ -15,8 +15,29 @@ func tempStore(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+func mustInsertRun(t *testing.T, s *Store, run *DAGRun) {
+	t.Helper()
+	if err := s.InsertDAGRun(run); err != nil {
+		t.Fatalf("InsertDAGRun: %v", err)
+	}
+}
+
+func mustInsertTask(t *testing.T, s *Store, task *Task) {
+	t.Helper()
+	if err := s.InsertTask(task); err != nil {
+		t.Fatalf("InsertTask: %v", err)
+	}
+}
+
+func mustUpdateTask(t *testing.T, s *Store, id, status string) {
+	t.Helper()
+	if err := s.UpdateTask(id, status, nil, "2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z"); err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
 }
 
 func TestOpen_CreatesDB(t *testing.T) {
@@ -26,7 +47,7 @@ func TestOpen_CreatesDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Fatal("expected state.db to exist")
@@ -49,13 +70,13 @@ func TestOpen_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
 	}
-	s1.Close()
+	_ = s1.Close()
 
 	s2, err := Open(dbPath)
 	if err != nil {
 		t.Fatalf("second Open: %v", err)
 	}
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 
 	// Verify tables exist by querying them
 	var count int
@@ -133,12 +154,11 @@ func TestReadyTasks_Roots(t *testing.T) {
 	s := tempStore(t)
 
 	run := &DAGRun{ID: "run-001", TriggerSource: "manual", StartedAt: "2026-01-01T00:00:00Z", Status: "running"}
-	s.InsertDAGRun(run)
+	mustInsertRun(t, s, run)
 
-	// A (no deps), B (no deps), C (after A, B)
-	s.InsertTask(&Task{ID: "t-a", DAGRunID: "run-001", Pipeline: "A", Status: "pending", Attempt: 1})
-	s.InsertTask(&Task{ID: "t-b", DAGRunID: "run-001", Pipeline: "B", Status: "pending", Attempt: 1})
-	s.InsertTask(&Task{ID: "t-c", DAGRunID: "run-001", Pipeline: "C", Status: "pending", Attempt: 1})
+	mustInsertTask(t, s, &Task{ID: "t-a", DAGRunID: "run-001", Pipeline: "A", Status: "pending", Attempt: 1})
+	mustInsertTask(t, s, &Task{ID: "t-b", DAGRunID: "run-001", Pipeline: "B", Status: "pending", Attempt: 1})
+	mustInsertTask(t, s, &Task{ID: "t-c", DAGRunID: "run-001", Pipeline: "C", Status: "pending", Attempt: 1})
 
 	deps := map[string][]string{
 		"A": {},
@@ -167,13 +187,12 @@ func TestReadyTasks_AfterCompletion(t *testing.T) {
 	s := tempStore(t)
 
 	run := &DAGRun{ID: "run-001", TriggerSource: "manual", StartedAt: "2026-01-01T00:00:00Z", Status: "running"}
-	s.InsertDAGRun(run)
+	mustInsertRun(t, s, run)
 
-	s.InsertTask(&Task{ID: "t-a", DAGRunID: "run-001", Pipeline: "A", Status: "pending", Attempt: 1})
-	s.InsertTask(&Task{ID: "t-b", DAGRunID: "run-001", Pipeline: "B", Status: "pending", Attempt: 1})
+	mustInsertTask(t, s, &Task{ID: "t-a", DAGRunID: "run-001", Pipeline: "A", Status: "pending", Attempt: 1})
+	mustInsertTask(t, s, &Task{ID: "t-b", DAGRunID: "run-001", Pipeline: "B", Status: "pending", Attempt: 1})
 
-	// Complete A
-	s.UpdateTask("t-a", "completed", nil, "2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z")
+	mustUpdateTask(t, s, "t-a", "completed")
 
 	deps := map[string][]string{
 		"A": {},
@@ -194,10 +213,10 @@ func TestReadyTasks_Blocked(t *testing.T) {
 	s := tempStore(t)
 
 	run := &DAGRun{ID: "run-001", TriggerSource: "manual", StartedAt: "2026-01-01T00:00:00Z", Status: "running"}
-	s.InsertDAGRun(run)
+	mustInsertRun(t, s, run)
 
-	s.InsertTask(&Task{ID: "t-a", DAGRunID: "run-001", Pipeline: "A", Status: "pending", Attempt: 1})
-	s.InsertTask(&Task{ID: "t-b", DAGRunID: "run-001", Pipeline: "B", Status: "pending", Attempt: 1})
+	mustInsertTask(t, s, &Task{ID: "t-a", DAGRunID: "run-001", Pipeline: "A", Status: "pending", Attempt: 1})
+	mustInsertTask(t, s, &Task{ID: "t-b", DAGRunID: "run-001", Pipeline: "B", Status: "pending", Attempt: 1})
 
 	deps := map[string][]string{
 		"A": {},
@@ -218,17 +237,17 @@ func TestReadyTasks_CrossRunIsolation(t *testing.T) {
 	s := tempStore(t)
 
 	// Run 1
-	s.InsertDAGRun(&DAGRun{ID: "run-001", TriggerSource: "manual", StartedAt: "2026-01-01T00:00:00Z", Status: "running"})
-	s.InsertTask(&Task{ID: "t1-a", DAGRunID: "run-001", Pipeline: "A", Status: "pending", Attempt: 1})
-	s.InsertTask(&Task{ID: "t1-b", DAGRunID: "run-001", Pipeline: "B", Status: "pending", Attempt: 1})
+	mustInsertRun(t, s, &DAGRun{ID: "run-001", TriggerSource: "manual", StartedAt: "2026-01-01T00:00:00Z", Status: "running"})
+	mustInsertTask(t, s, &Task{ID: "t1-a", DAGRunID: "run-001", Pipeline: "A", Status: "pending", Attempt: 1})
+	mustInsertTask(t, s, &Task{ID: "t1-b", DAGRunID: "run-001", Pipeline: "B", Status: "pending", Attempt: 1})
 
 	// Run 2
-	s.InsertDAGRun(&DAGRun{ID: "run-002", TriggerSource: "manual", StartedAt: "2026-01-01T01:00:00Z", Status: "running"})
-	s.InsertTask(&Task{ID: "t2-a", DAGRunID: "run-002", Pipeline: "A", Status: "pending", Attempt: 1})
-	s.InsertTask(&Task{ID: "t2-b", DAGRunID: "run-002", Pipeline: "B", Status: "pending", Attempt: 1})
+	mustInsertRun(t, s, &DAGRun{ID: "run-002", TriggerSource: "manual", StartedAt: "2026-01-01T01:00:00Z", Status: "running"})
+	mustInsertTask(t, s, &Task{ID: "t2-a", DAGRunID: "run-002", Pipeline: "A", Status: "pending", Attempt: 1})
+	mustInsertTask(t, s, &Task{ID: "t2-b", DAGRunID: "run-002", Pipeline: "B", Status: "pending", Attempt: 1})
 
 	// Complete A in run 1 only
-	s.UpdateTask("t1-a", "completed", nil, "2026-01-01T00:00:01Z", "2026-01-01T00:00:02Z")
+	mustUpdateTask(t, s, "t1-a", "completed")
 
 	deps := map[string][]string{
 		"A": {},

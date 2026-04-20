@@ -17,6 +17,12 @@ var supportedDrivers = map[string]bool{
 
 var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 
+// InterpolateEnv replaces ${VAR} references with environment variable values.
+// Unset variables are left as-is.
+func InterpolateEnv(content string) string {
+	return interpolateEnv(content)
+}
+
 // Config is the top-level flowerpot.yaml schema.
 type Config struct {
 	Schedule       string                `yaml:"schedule"`
@@ -47,13 +53,23 @@ type Pipeline struct {
 	Python      *PythonConfig     `yaml:"python"`
 	Image       string            `yaml:"image"`
 	Warehouse   string            `yaml:"warehouse"`
-	Transaction bool              `yaml:"transaction"`
+	Transaction *bool             `yaml:"transaction"`
 	Schedule    string            `yaml:"schedule"`
+}
+
+// UseTransaction returns whether this pipeline should execute SQL in a transaction.
+// Defaults to true if not explicitly set.
+func (p *Pipeline) UseTransaction() bool {
+	if p.Transaction == nil {
+		return true
+	}
+	return *p.Transaction
 }
 
 type RetryConfig struct {
 	Attempts int    `yaml:"attempts"`
 	Delay    string `yaml:"delay"`
+	Strategy string `yaml:"strategy"` // "fixed" or "exponential"; defaults to "fixed"
 }
 
 type PythonConfig struct {

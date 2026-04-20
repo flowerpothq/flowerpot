@@ -1,7 +1,6 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -221,8 +220,7 @@ func TestParseError_EmptyPipeline(t *testing.T) {
 }
 
 func TestParse_EnvInterpolation(t *testing.T) {
-	os.Setenv("TEST_FLOWERPOT_VAR", "hello-world")
-	defer os.Unsetenv("TEST_FLOWERPOT_VAR")
+	t.Setenv("TEST_FLOWERPOT_VAR", "hello-world")
 
 	result, err := Load(testdataPath("valid_with_env.yaml"))
 	if err != nil {

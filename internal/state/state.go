@@ -16,6 +16,7 @@ type Store struct {
 	stmtInsertRun  *sql.Stmt
 	stmtInsertTask *sql.Stmt
 	stmtUpdateTask *sql.Stmt
+	stmtUpdateRun  *sql.Stmt
 	stmtTasksByRun *sql.Stmt
 	stmtRunByID    *sql.Stmt
 }
@@ -53,18 +54,18 @@ func Open(dbPath string) (*Store, error) {
 	}
 
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("enabling WAL: %w", err)
 	}
 
 	if err := runMigrations(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("running migrations: %w", err)
 	}
 
 	s := &Store{db: db}
 	if err := s.prepareStatements(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("preparing statements: %w", err)
 	}
 
@@ -74,10 +75,10 @@ func Open(dbPath string) (*Store, error) {
 func (s *Store) Close() error {
 	for _, stmt := range []*sql.Stmt{
 		s.stmtInsertRun, s.stmtInsertTask, s.stmtUpdateTask,
-		s.stmtTasksByRun, s.stmtRunByID,
+		s.stmtUpdateRun, s.stmtTasksByRun, s.stmtRunByID,
 	} {
 		if stmt != nil {
-			stmt.Close()
+			_ = stmt.Close()
 		}
 	}
 	return s.db.Close()
@@ -140,6 +141,11 @@ func (s *Store) prepareStatements() error {
 		return err
 	}
 
+	s.stmtUpdateRun, err = s.db.Prepare(`UPDATE dag_runs SET status = ?, ended_at = ? WHERE id = ?`)
+	if err != nil {
+		return err
+	}
+
 	s.stmtTasksByRun, err = s.db.Prepare(`SELECT id, dag_run_id, pipeline, status, attempt, exit_code, started_at, ended_at
 		FROM tasks WHERE dag_run_id = ?`)
 	if err != nil {
@@ -189,7 +195,7 @@ func (s *Store) TasksByRun(dagRunID string) ([]Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tasks []Task
 	for rows.Next() {
@@ -245,6 +251,11 @@ func (s *Store) ReadyTasks(dagRunID string, deps map[string][]string) ([]Task, e
 		}
 	}
 	return ready, nil
+}
+
+func (s *Store) UpdateDAGRun(id, status, endedAt string) error {
+	_, err := s.stmtUpdateRun.Exec(status, endedAt, id)
+	return err
 }
 
 // IsWALEnabled checks if WAL journal mode is active.
