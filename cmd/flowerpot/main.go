@@ -27,18 +27,18 @@ func main() {
 	root.AddCommand(validateCmd())
 	root.AddCommand(versionCmd())
 	root.AddCommand(runCmd())
+	root.AddCommand(serveCmd())
+	root.AddCommand(triggerCmd())
 	root.AddCommand(statusCmd())
-	root.AddCommand(stubCmd("serve", "Start the scheduler daemon"))
-	root.AddCommand(stubCmd("trigger", "Trigger a DAG run on the running daemon"))
-	root.AddCommand(stubCmd("logs", "View DAG run logs"))
-	root.AddCommand(stubCmd("init", "Scaffold a new project"))
+	root.AddCommand(logsCmd())
+	root.AddCommand(initCmd())
 
 	for _, c := range root.Commands() {
 		c.SetHelpFunc(subcommandHelp)
 	}
 
 	if err := root.Execute(); err != nil {
-		if err != errValidationFailed && err != errRunFailed {
+		if err != errValidationFailed && err != errRunFailed && err != errInitFailed && err != errServeFailed {
 			fmt.Fprintln(os.Stderr, err)
 		}
 		os.Exit(1)
@@ -58,13 +58,3 @@ func versionCmd() *cobra.Command {
 	}
 }
 
-func stubCmd(name, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   name,
-		Short: short,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fmt.Fprintf(os.Stderr, "%q is not yet implemented\n", name)
-			return nil
-		},
-	}
-}
