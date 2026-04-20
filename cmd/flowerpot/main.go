@@ -21,7 +21,7 @@ func main() {
 
 	root.AddCommand(validateCmd())
 	root.AddCommand(versionCmd())
-	root.AddCommand(stubCmd("run", "Execute pipelines"))
+	root.AddCommand(runCmd())
 	root.AddCommand(stubCmd("serve", "Start the scheduler daemon"))
 	root.AddCommand(stubCmd("trigger", "Trigger a DAG run via HTTP"))
 	root.AddCommand(stubCmd("status", "Show pipeline and run status"))
@@ -31,7 +31,7 @@ func main() {
 	root.AddCommand(stubCmd("init", "Initialize a new flowerpot project"))
 
 	if err := root.Execute(); err != nil {
-		if err != errValidationFailed {
+		if err != errValidationFailed && err != errRunFailed {
 			fmt.Fprintln(os.Stderr, err)
 		}
 		os.Exit(1)
