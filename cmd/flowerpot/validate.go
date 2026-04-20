@@ -7,15 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/flowerpothq/flowerpot/internal/config"
 	"github.com/flowerpothq/flowerpot/internal/dag"
 	"github.com/spf13/cobra"
-)
-
-var (
-	stylePass = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	styleFail = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
 )
 
 var errValidationFailed = errors.New("validation failed")
@@ -38,9 +32,12 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		path = args[0]
 	}
 
+	fmt.Print(cmdHeader("validate"))
+
 	result, err := config.Load(path)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, styleFail.Render("✗ "+err.Error()))
+		fmt.Fprintln(os.Stderr, styleFail.Render("  "+iconFail+" "+err.Error()))
+		fmt.Println()
 		return errValidationFailed
 	}
 
@@ -49,20 +46,20 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if result.HasErrors() {
 		hasErrors = true
 		for _, e := range result.Errors {
-			fmt.Fprintln(os.Stderr, styleFail.Render("✗ "+e.Error()))
+			fmt.Fprintln(os.Stderr, styleFail.Render("  "+iconFail+" "+e.Error()))
 		}
 	} else {
-		fmt.Println(stylePass.Render("✓ Schema valid"))
+		fmt.Println(stylePass.Render("  " + iconPass + " Schema valid"))
 	}
 
 	g := dag.Graph(result.Config.DAGGraph())
 	order, dagErr := dag.TopoSort(g)
 	if dagErr != nil {
 		hasErrors = true
-		fmt.Fprintln(os.Stderr, styleFail.Render("✗ "+dagErr.Error()))
+		fmt.Fprintln(os.Stderr, styleFail.Render("  "+iconFail+" "+dagErr.Error()))
 	} else {
-		msg := fmt.Sprintf("✓ DAG valid (%d pipelines, topo order: %s)",
-			len(order), strings.Join(order, " → "))
+		msg := fmt.Sprintf("  %s DAG valid (%d pipelines: %s)",
+			iconPass, len(order), strings.Join(order, " → "))
 		fmt.Println(stylePass.Render(msg))
 	}
 
@@ -70,13 +67,14 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		baseDir := filepath.Dir(path)
 		total, found := result.Config.SQLFileCount(baseDir)
 		if found == total {
-			fmt.Println(stylePass.Render(fmt.Sprintf("✓ SQL files found (%d/%d)", found, total)))
+			fmt.Println(stylePass.Render(fmt.Sprintf("  %s SQL files (%d/%d)", iconPass, found, total)))
 		} else {
 			hasErrors = true
-			fmt.Fprintln(os.Stderr, styleFail.Render(fmt.Sprintf("✗ SQL files missing (%d/%d found)", found, total)))
+			fmt.Fprintln(os.Stderr, styleFail.Render(fmt.Sprintf("  %s SQL files missing (%d/%d found)", iconFail, found, total)))
 		}
 	}
 
+	fmt.Println()
 	if hasErrors {
 		return errValidationFailed
 	}
