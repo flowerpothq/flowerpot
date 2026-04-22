@@ -16,7 +16,7 @@ func TestInitCommand_CreatesFiles(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d\nstderr: %s", exitCode, stderr)
 	}
 
-	for _, f := range []string{"flowerpot.yaml", ".gitignore", "scripts/transform.sh"} {
+	for _, f := range []string{"flowerpot.yaml", ".gitignore"} {
 		path := filepath.Join(target, f)
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			t.Errorf("expected %s to exist", f)

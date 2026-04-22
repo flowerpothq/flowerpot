@@ -159,8 +159,6 @@ go test ./...                            # 106 tests, 8 packages
 go vet ./...                             # static analysis
 ```
 
-6,600+ lines of Go across 10 packages.
-
 ## License
 
 Apache 2.0

@@ -53,19 +53,6 @@ func runInit(dir string) error {
 	}
 	fmt.Println(stylePass.Render(fmt.Sprintf("  %s flowerpot.yaml", iconPass)))
 
-	scriptsDir := filepath.Join(dir, "scripts")
-	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, styleFail.Render(fmt.Sprintf("  %s creating scripts/: %s", iconFail, err)))
-		return errInitFailed
-	}
-
-	scriptPath := filepath.Join(scriptsDir, "transform.sh")
-	if err := os.WriteFile(scriptPath, []byte(sampleScript), 0o755); err != nil {
-		fmt.Fprintln(os.Stderr, styleFail.Render(fmt.Sprintf("  %s writing scripts/transform.sh: %s", iconFail, err)))
-		return errInitFailed
-	}
-	fmt.Println(stylePass.Render(fmt.Sprintf("  %s scripts/transform.sh", iconPass)))
-
 	gitignorePath := filepath.Join(dir, ".gitignore")
 	gitignoreContent := ".flowerpot/\n"
 	if existing, err := os.ReadFile(gitignorePath); err == nil {
@@ -106,25 +93,15 @@ pipelines:
     timeout: "60s"
 
   transform:
-    run: "bash scripts/transform.sh"
+    run: "echo 'transforming data — replace with your script'"
     after: [extract]
     timeout: "120s"
     retry:
-      max_retries: 2
+      attempts: 2
       delay: "5s"
 
   load:
     run: "echo 'loading data — replace with your script'"
     after: [transform]
     timeout: "60s"
-`
-
-const sampleScript = `#!/usr/bin/env bash
-set -euo pipefail
-
-echo "transform: logical_date=${FLOWERPOT_LOGICAL_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-echo "transform: dag_run_id=${FLOWERPOT_DAG_RUN_ID:-unknown}"
-echo "transform: processing data..."
-sleep 1
-echo "transform: done"
 `
