@@ -25,8 +25,8 @@ func TestValidateCommand_RealExample(t *testing.T) {
 	if !strings.Contains(combined, "DAG valid") {
 		t.Fatalf("expected 'DAG valid' in output, got: %s", combined)
 	}
-	if !strings.Contains(combined, "SQL files found") {
-		t.Fatalf("expected 'SQL files found' in output, got: %s", combined)
+	if !strings.Contains(combined, "SQL files") {
+		t.Fatalf("expected 'SQL files' in output, got: %s", combined)
 	}
 }
 

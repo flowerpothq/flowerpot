@@ -112,6 +112,10 @@ func (e *CommandExecutor) buildEnv(name string, p *config.Pipeline, attempt int)
 	env = append(env, "FLOWERPOT_PIPELINE="+name)
 	env = append(env, fmt.Sprintf("FLOWERPOT_ATTEMPT=%d", attempt))
 
+	if _, exists := e.FlowerpotEnv["FLOWERPOT_LOGICAL_DATE"]; !exists {
+		env = append(env, "FLOWERPOT_LOGICAL_DATE="+time.Now().UTC().Format(time.RFC3339))
+	}
+
 	for k, v := range p.Env {
 		env = append(env, k+"="+v)
 	}

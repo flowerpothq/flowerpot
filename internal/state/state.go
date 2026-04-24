@@ -53,9 +53,18 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
 
+	// Single connection serializes all SQLite operations, avoiding SQLITE_BUSY.
+	// WAL mode ensures reads don't block the TUI polling in the future.
+	db.SetMaxOpenConns(1)
+
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("enabling WAL: %w", err)
+	}
+
+	if _, err := db.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("setting busy timeout: %w", err)
 	}
 
 	if err := runMigrations(db); err != nil {
@@ -256,6 +265,40 @@ func (s *Store) ReadyTasks(dagRunID string, deps map[string][]string) ([]Task, e
 func (s *Store) UpdateDAGRun(id, status, endedAt string) error {
 	_, err := s.stmtUpdateRun.Exec(status, endedAt, id)
 	return err
+}
+
+// RecentRuns returns the last N DAG runs, newest first.
+func (s *Store) RecentRuns(limit int) ([]DAGRun, error) {
+	rows, err := s.db.Query(`SELECT id, schedule_id, trigger_source, started_at, ended_at, status, retry_of
+		FROM dag_runs ORDER BY started_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var runs []DAGRun
+	for rows.Next() {
+		var r DAGRun
+		var scheduleID, endedAt, retryOf sql.NullString
+		if err := rows.Scan(&r.ID, &scheduleID, &r.TriggerSource, &r.StartedAt, &endedAt, &r.Status, &retryOf); err != nil {
+			return nil, err
+		}
+		r.ScheduleID = scheduleID.String
+		r.EndedAt = endedAt.String
+		r.RetryOf = retryOf.String
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
+
+// HasRunningRun returns true if any DAG run has status "running".
+func (s *Store) HasRunningRun() (bool, error) {
+	var count int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM dag_runs WHERE status = 'running'`).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // IsWALEnabled checks if WAL journal mode is active.

@@ -73,7 +73,8 @@ type RetryConfig struct {
 }
 
 type PythonConfig struct {
-	Deps []string `yaml:"deps"`
+	Deps         []string `yaml:"deps"`
+	Requirements string   `yaml:"requirements"`
 }
 
 // ValidationError holds a validation failure with an optional line number.
@@ -223,6 +224,26 @@ func validate(cfg *Config, rootNode *yaml.Node, baseDir string) []ValidationErro
 				errs = append(errs, ValidationError{
 					Line:    line,
 					Message: fmt.Sprintf("pipeline %q: sql file %q not found", name, p.SQL),
+				})
+			}
+		}
+
+		if p.Image != "" && p.Python != nil {
+			errs = append(errs, ValidationError{
+				Line:    line,
+				Message: fmt.Sprintf("pipeline %q: image and python are mutually exclusive", name),
+			})
+		}
+
+		if p.Python != nil && p.Python.Requirements != "" {
+			reqPath := p.Python.Requirements
+			if !filepath.IsAbs(reqPath) {
+				reqPath = filepath.Join(baseDir, reqPath)
+			}
+			if _, err := os.Stat(reqPath); os.IsNotExist(err) {
+				errs = append(errs, ValidationError{
+					Line:    line,
+					Message: fmt.Sprintf("pipeline %q: python.requirements file %q not found", name, p.Python.Requirements),
 				})
 			}
 		}
