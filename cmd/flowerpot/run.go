@@ -481,7 +481,7 @@ func runPipeline(cmd *cobra.Command, pipelineName, configPath string, jsonOutput
 			Warehouses: result.Config.Warehouses,
 		}
 	} else {
-		wrapper, wrapErr := executor.NewWrapper(p)
+		wrapper, wrapErr := executor.NewWrapper(p, projectDir)
 		if wrapErr != nil {
 			fmt.Fprintln(os.Stderr, styleFail.Render("  "+iconFail+" runtime wrapper: "+wrapErr.Error()))
 			return errRunFailed

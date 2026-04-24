@@ -158,7 +158,7 @@ func (r *DAGRunner) buildExecutor(p *config.Pipeline) (executor.Executor, error)
 		}, nil
 	}
 
-	wrapper, err := executor.NewWrapper(p)
+	wrapper, err := executor.NewWrapper(p, r.ProjectDir)
 	if err != nil {
 		return nil, err
 	}
