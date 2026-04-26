@@ -233,6 +233,95 @@ func TestReadyTasks_Blocked(t *testing.T) {
 	}
 }
 
+func TestCrashRecovery_OrphanedTasks(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, ".flowerpot", "state.db")
+
+	// First: create a store, insert a "running" task, then close (simulating crash)
+	s1, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open (setup): %v", err)
+	}
+	mustInsertRun(t, s1, &DAGRun{ID: "crash-run", TriggerSource: "cli", StartedAt: "2026-01-01T00:00:00Z", Status: "running"})
+	mustInsertTask(t, s1, &Task{ID: "t-orphan", DAGRunID: "crash-run", Pipeline: "A", Status: "pending", Attempt: 1})
+	if err := s1.UpdateTask("t-orphan", "running", nil, "2026-01-01T00:00:01Z", ""); err != nil {
+		t.Fatal(err)
+	}
+	_ = s1.Close()
+
+	// Second: reopen — recovery should mark orphan as failed
+	s2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open (recovery): %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+
+	tasks, err := s2.TasksByRun("crash-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(tasks))
+	}
+	if tasks[0].Status != "failed" {
+		t.Fatalf("expected orphaned task to be 'failed', got %q", tasks[0].Status)
+	}
+
+	run, err := s2.GetDAGRun("crash-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != "partial_failure" {
+		t.Fatalf("expected dag_run status 'partial_failure', got %q", run.Status)
+	}
+}
+
+func TestCrashRecovery_NoOrphans(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, ".flowerpot", "state.db")
+
+	s1, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open (setup): %v", err)
+	}
+	mustInsertRun(t, s1, &DAGRun{ID: "clean-run", TriggerSource: "cli", StartedAt: "2026-01-01T00:00:00Z", Status: "completed"})
+	mustInsertTask(t, s1, &Task{ID: "t-done", DAGRunID: "clean-run", Pipeline: "A", Status: "pending", Attempt: 1})
+	mustUpdateTask(t, s1, "t-done", "completed")
+	_ = s1.Close()
+
+	s2, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open (no recovery needed): %v", err)
+	}
+	defer func() { _ = s2.Close() }()
+
+	tasks, err := s2.TasksByRun("clean-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tasks[0].Status != "completed" {
+		t.Fatalf("expected task still 'completed', got %q", tasks[0].Status)
+	}
+}
+
+func TestFindDAGRunByPrefix(t *testing.T) {
+	s := tempStore(t)
+	mustInsertRun(t, s, &DAGRun{ID: "abc12345-full-uuid", TriggerSource: "cli", StartedAt: "2026-01-01T00:00:00Z", Status: "completed"})
+
+	run, err := s.FindDAGRunByPrefix("abc123")
+	if err != nil {
+		t.Fatalf("FindDAGRunByPrefix: %v", err)
+	}
+	if run.ID != "abc12345-full-uuid" {
+		t.Fatalf("expected abc12345-full-uuid, got %s", run.ID)
+	}
+
+	_, err = s.FindDAGRunByPrefix("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent prefix")
+	}
+}
+
 func TestReadyTasks_CrossRunIsolation(t *testing.T) {
 	s := tempStore(t)
 

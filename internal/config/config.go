@@ -30,6 +30,7 @@ type Config struct {
 	Overlap        string                `yaml:"overlap"`
 	Catchup        bool                  `yaml:"catchup"`
 	MaxConcurrent  int                   `yaml:"max_concurrent"`
+	ShutdownGrace  string                `yaml:"shutdown_grace"`
 	DefaultTimeout string                `yaml:"default_timeout"`
 	DefaultRetry   *RetryConfig          `yaml:"default_retry"`
 	Settings       map[string]string     `yaml:"settings"`

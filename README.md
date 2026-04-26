@@ -33,7 +33,6 @@ That's it. Your pipelines run on the schedule defined in `flowerpot.yaml`. Check
 ```
 my-project/
   flowerpot.yaml         # pipeline definitions + schedule
-  scripts/transform.sh   # example script
   .gitignore             # ignores .flowerpot/
 ```
 
@@ -120,6 +119,8 @@ pipelines:
       strategy: "fixed"              # "fixed" (default) or "exponential"
     python:
       deps: ["pandas", "requests"]   # auto-wraps with uv run --with
+    image: "myteam/etl:latest"       # run inside a Docker container
+    transaction: true                # wrap SQL in a transaction (default: true)
 ```
 
 ### Global options
@@ -127,6 +128,8 @@ pipelines:
 ```yaml
 schedule: "0 */2 * * *"             # cron schedule (used by flowerpot serve)
 timezone: "UTC"                      # timezone for cron
+overlap: skip                        # skip | queue | kill_previous (default: skip)
+catchup: false                       # replay missed cron ticks (default: false)
 max_concurrent: 4                    # max parallel pipelines
 default_timeout: "1h"               # default per-pipeline timeout
 default_retry:
@@ -154,8 +157,9 @@ Flowerpot is a single binary. Install it, write a YAML, run `flowerpot serve`. N
 ## Development
 
 ```bash
-go build -o flowerpot ./cmd/flowerpot   # build
-go test ./...                            # 106 tests, 8 packages
+make build                               # build to bin/flowerpot
+go build -o flowerpot ./cmd/flowerpot    # quick build
+go test ./...                            # run all tests
 go vet ./...                             # static analysis
 ```
 

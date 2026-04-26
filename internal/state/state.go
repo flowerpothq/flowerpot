@@ -78,7 +78,59 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("preparing statements: %w", err)
 	}
 
+	if n, recoverErr := s.recoverOrphanedRuns(); recoverErr != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("crash recovery: %w", recoverErr)
+	} else if n > 0 {
+		fmt.Fprintf(os.Stderr, "warning: recovered %d orphaned task(s) from previous crash\n", n)
+	}
+
 	return s, nil
+}
+
+// recoverOrphanedRuns finds tasks stuck in "running" from a previous crash
+// and marks them as "failed". Their parent dag_run is set to "partial_failure"
+// if it was still marked "running".
+func (s *Store) recoverOrphanedRuns() (int, error) {
+	rows, err := s.db.Query(`SELECT id, dag_run_id FROM tasks WHERE status = 'running'`)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	type orphan struct{ taskID, dagRunID string }
+	var orphans []orphan
+	for rows.Next() {
+		var o orphan
+		if err := rows.Scan(&o.taskID, &o.dagRunID); err != nil {
+			return 0, err
+		}
+		orphans = append(orphans, o)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	if len(orphans) == 0 {
+		return 0, nil
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	ec := -1
+	dagRuns := make(map[string]bool)
+
+	for _, o := range orphans {
+		if err := s.UpdateTask(o.taskID, "failed", &ec, "", now); err != nil {
+			return 0, fmt.Errorf("recovering task %s: %w", o.taskID, err)
+		}
+		dagRuns[o.dagRunID] = true
+	}
+
+	for runID := range dagRuns {
+		_ = s.UpdateDAGRun(runID, "partial_failure", now)
+	}
+
+	return len(orphans), nil
 }
 
 func (s *Store) Close() error {
@@ -289,6 +341,60 @@ func (s *Store) RecentRuns(limit int) ([]DAGRun, error) {
 		runs = append(runs, r)
 	}
 	return runs, rows.Err()
+}
+
+// FindDAGRunByPrefix returns a DAG run whose ID starts with the given prefix.
+// Returns sql.ErrNoRows if no match is found, or an error if multiple runs match.
+func (s *Store) FindDAGRunByPrefix(prefix string) (*DAGRun, error) {
+	rows, err := s.db.Query(`SELECT id, schedule_id, trigger_source, started_at, ended_at, status, retry_of
+		FROM dag_runs WHERE id LIKE ? ORDER BY started_at DESC LIMIT 2`, prefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var runs []DAGRun
+	for rows.Next() {
+		var r DAGRun
+		var scheduleID, endedAt, retryOf sql.NullString
+		if err := rows.Scan(&r.ID, &scheduleID, &r.TriggerSource, &r.StartedAt, &endedAt, &r.Status, &retryOf); err != nil {
+			return nil, err
+		}
+		r.ScheduleID = scheduleID.String
+		r.EndedAt = endedAt.String
+		r.RetryOf = retryOf.String
+		runs = append(runs, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(runs) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	if len(runs) > 1 {
+		return nil, fmt.Errorf("ambiguous prefix %q: matches %s and %s", prefix, runs[0].ID[:8], runs[1].ID[:8])
+	}
+	return &runs[0], nil
+}
+
+// OldestQueuedRun returns the oldest DAG run with status "queued", or nil if none.
+func (s *Store) OldestQueuedRun() (*DAGRun, error) {
+	var r DAGRun
+	var scheduleID, endedAt, retryOf sql.NullString
+	err := s.db.QueryRow(`SELECT id, schedule_id, trigger_source, started_at, ended_at, status, retry_of
+		FROM dag_runs WHERE status = 'queued' ORDER BY started_at ASC LIMIT 1`).Scan(
+		&r.ID, &scheduleID, &r.TriggerSource, &r.StartedAt, &endedAt, &r.Status, &retryOf)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	r.ScheduleID = scheduleID.String
+	r.EndedAt = endedAt.String
+	r.RetryOf = retryOf.String
+	return &r, nil
 }
 
 // HasRunningRun returns true if any DAG run has status "running".

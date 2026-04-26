@@ -96,7 +96,7 @@ func ComputeDAGRunStatus(tasks []state.Task) string {
 
 	var completed int
 	for _, t := range tasks {
-		if t.Status == "completed" {
+		if t.Status == "completed" || t.Status == "skipped_on_retry" {
 			completed++
 		}
 	}
