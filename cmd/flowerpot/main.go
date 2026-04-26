@@ -31,6 +31,7 @@ func main() {
 	root.AddCommand(triggerCmd())
 	root.AddCommand(statusCmd())
 	root.AddCommand(logsCmd())
+	root.AddCommand(retryCmd())
 	root.AddCommand(initCmd())
 
 	for _, c := range root.Commands() {
