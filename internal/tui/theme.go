@@ -14,7 +14,6 @@ var (
 	styleWarn  = lipgloss.NewStyle().Foreground(colorWarn)
 	styleDim   = lipgloss.NewStyle().Foreground(colorDim)
 	styleBrand = lipgloss.NewStyle().Foreground(colorBrand).Bold(true)
-	styleBold  = lipgloss.NewStyle().Bold(true)
 
 	styleStatusBar = lipgloss.NewStyle().
 			Background(lipgloss.Color("#333333")).
