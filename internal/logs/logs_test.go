@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestCreateLogDir_CreatesDirectory(t *testing.T) {
@@ -24,6 +25,37 @@ func TestCreateLogDir_CreatesDirectory(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Fatalf("expected directory, got file")
+	}
+}
+
+func TestVacuumLogDirs(t *testing.T) {
+	projectDir := t.TempDir()
+
+	// Create two log dirs
+	oldDir, _ := CreateLogDir(projectDir, "old-run")
+	newDir, _ := CreateLogDir(projectDir, "new-run")
+
+	// Backdate the old dir's modtime
+	old := time.Now().Add(-48 * time.Hour)
+	_ = os.Chtimes(oldDir, old, old)
+	// Ensure new dir is recent
+	_ = os.Chtimes(newDir, time.Now(), time.Now())
+
+	n, err := VacuumLogDirs(projectDir, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("VacuumLogDirs: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 dir removed, got %d", n)
+	}
+
+	// Old dir should be gone
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Fatal("expected old dir to be removed")
+	}
+	// New dir should remain
+	if _, err := os.Stat(newDir); os.IsNotExist(err) {
+		t.Fatal("expected new dir to remain")
 	}
 }
 

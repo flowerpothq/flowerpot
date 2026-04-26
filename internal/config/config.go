@@ -31,6 +31,7 @@ type Config struct {
 	Catchup        bool                  `yaml:"catchup"`
 	MaxConcurrent  int                   `yaml:"max_concurrent"`
 	ShutdownGrace  string                `yaml:"shutdown_grace"`
+	LogRetention   string                `yaml:"log_retention"`
 	DefaultTimeout string                `yaml:"default_timeout"`
 	DefaultRetry   *RetryConfig          `yaml:"default_retry"`
 	Settings       map[string]string     `yaml:"settings"`
@@ -248,6 +249,13 @@ func validate(cfg *Config, rootNode *yaml.Node, baseDir string) []ValidationErro
 				})
 			}
 		}
+	}
+
+	validOverlaps := map[string]bool{"skip": true, "queue": true, "kill_previous": true, "": true}
+	if !validOverlaps[cfg.Overlap] {
+		errs = append(errs, ValidationError{
+			Message: fmt.Sprintf("overlap: unknown policy %q (valid: skip, queue, kill_previous)", cfg.Overlap),
+		})
 	}
 
 	warehouseNames := make([]string, 0, len(cfg.Warehouses))

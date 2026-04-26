@@ -42,6 +42,10 @@ func New(cfg *config.Config, store *state.Store, projectDir string, logger *slog
 		return nil, fmt.Errorf("invalid timezone %q: %w", cfg.Timezone, err)
 	}
 
+	if cfg.Catchup {
+		logger.Warn("catchup: true is not yet implemented; missed cron ticks will not be replayed")
+	}
+
 	s := &Scheduler{
 		store:      store,
 		cfg:        cfg,
