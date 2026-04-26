@@ -33,6 +33,7 @@ func main() {
 	root.AddCommand(logsCmd())
 	root.AddCommand(retryCmd())
 	root.AddCommand(initCmd())
+	root.AddCommand(uiCmd())
 
 	for _, c := range root.Commands() {
 		c.SetHelpFunc(subcommandHelp)
