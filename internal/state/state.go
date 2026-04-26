@@ -411,12 +411,12 @@ func (s *Store) HasRunningRun() (bool, error) {
 // Returns the number of runs removed.
 func (s *Store) VacuumOldRuns(cutoff time.Time) (int, error) {
 	cutoffStr := cutoff.UTC().Format(time.RFC3339)
-	result, err := s.db.Exec(`DELETE FROM tasks WHERE dag_run_id IN (
+	_, err := s.db.Exec(`DELETE FROM tasks WHERE dag_run_id IN (
 		SELECT id FROM dag_runs WHERE ended_at != '' AND ended_at < ? AND status != 'running')`, cutoffStr)
 	if err != nil {
 		return 0, err
 	}
-	result, err = s.db.Exec(`DELETE FROM dag_runs WHERE ended_at != '' AND ended_at < ? AND status != 'running'`, cutoffStr)
+	result, err := s.db.Exec(`DELETE FROM dag_runs WHERE ended_at != '' AND ended_at < ? AND status != 'running'`, cutoffStr)
 	if err != nil {
 		return 0, err
 	}
