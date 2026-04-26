@@ -407,6 +407,23 @@ func (s *Store) HasRunningRun() (bool, error) {
 	return count > 0, nil
 }
 
+// VacuumOldRuns deletes dag_runs (and their tasks) that ended before the cutoff.
+// Returns the number of runs removed.
+func (s *Store) VacuumOldRuns(cutoff time.Time) (int, error) {
+	cutoffStr := cutoff.UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`DELETE FROM tasks WHERE dag_run_id IN (
+		SELECT id FROM dag_runs WHERE ended_at != '' AND ended_at < ? AND status != 'running')`, cutoffStr)
+	if err != nil {
+		return 0, err
+	}
+	result, err := s.db.Exec(`DELETE FROM dag_runs WHERE ended_at != '' AND ended_at < ? AND status != 'running'`, cutoffStr)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
+}
+
 // IsWALEnabled checks if WAL journal mode is active.
 func (s *Store) IsWALEnabled() (bool, error) {
 	var mode string

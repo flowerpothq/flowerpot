@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func tempStore(t *testing.T) *Store {
@@ -319,6 +320,38 @@ func TestFindDAGRunByPrefix(t *testing.T) {
 	_, err = s.FindDAGRunByPrefix("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent prefix")
+	}
+}
+
+func TestVacuumOldRuns(t *testing.T) {
+	s := tempStore(t)
+
+	// Insert old completed run
+	mustInsertRun(t, s, &DAGRun{ID: "old-run", TriggerSource: "cli", StartedAt: "2020-01-01T00:00:00Z", Status: "completed"})
+	_ = s.UpdateDAGRun("old-run", "completed", "2020-01-01T00:01:00Z")
+	mustInsertTask(t, s, &Task{ID: "t-old", DAGRunID: "old-run", Pipeline: "A", Status: "completed", Attempt: 1})
+
+	// Insert recent run
+	mustInsertRun(t, s, &DAGRun{ID: "new-run", TriggerSource: "cli", StartedAt: "2026-04-01T00:00:00Z", Status: "completed"})
+	_ = s.UpdateDAGRun("new-run", "completed", "2026-04-01T00:01:00Z")
+	mustInsertTask(t, s, &Task{ID: "t-new", DAGRunID: "new-run", Pipeline: "A", Status: "completed", Attempt: 1})
+
+	// Vacuum with cutoff between old and new
+	cutoff, _ := time.Parse(time.RFC3339, "2025-01-01T00:00:00Z")
+	n, err := s.VacuumOldRuns(cutoff)
+	if err != nil {
+		t.Fatalf("VacuumOldRuns: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 run removed, got %d", n)
+	}
+
+	runs, _ := s.RecentRuns(10)
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 remaining run, got %d", len(runs))
+	}
+	if runs[0].ID != "new-run" {
+		t.Fatalf("expected new-run to survive vacuum, got %s", runs[0].ID)
 	}
 }
 

@@ -34,7 +34,7 @@ func TestGracefulShutdown_DrainsCleanly(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(configPath, port)
+		done <- runServe(configPath, port, "text")
 	}()
 
 	// Wait for server to start
@@ -80,7 +80,7 @@ func TestTriggerHTTP_CreatesDagRun(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(configPath, port)
+		done <- runServe(configPath, port, "text")
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -145,7 +145,7 @@ pipelines:
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(configPath, port)
+		done <- runServe(configPath, port, "text")
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -199,7 +199,7 @@ func TestTriggerHTTP_UnknownPipeline(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(configPath, port)
+		done <- runServe(configPath, port, "text")
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -240,7 +240,7 @@ func TestTriggerHTTP_Health(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- runServe(configPath, port)
+		done <- runServe(configPath, port, "text")
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)

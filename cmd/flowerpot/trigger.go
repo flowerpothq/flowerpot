@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/flowerpothq/flowerpot/internal/config"
 	"github.com/flowerpothq/flowerpot/internal/logs"
@@ -15,22 +17,31 @@ import (
 	"github.com/flowerpothq/flowerpot/internal/state"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
-	"time"
 )
 
 func triggerCmd() *cobra.Command {
 	var configPath string
 
 	cmd := &cobra.Command{
-		Use:   "trigger",
+		Use:   "trigger [pipeline]",
 		Short: "Trigger a DAG run via HTTP",
-		Long:  "Sends an HTTP POST to the running flowerpot serve process\nto trigger an immediate DAG run.",
-		Example: `flowerpot trigger
-flowerpot trigger -c path/to/flowerpot.yaml`,
+		Long: `Sends an HTTP POST to the running flowerpot serve process
+to trigger an immediate DAG run.
+
+Without arguments, triggers the full DAG.
+With a pipeline name, triggers only that pipeline (and its upstream deps by default).`,
+		Example: `flowerpot trigger                        trigger full DAG
+flowerpot trigger extract                trigger single pipeline + upstream
+flowerpot trigger extract ?scope=pipeline  trigger single pipeline only`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTrigger(configPath)
+			pipeline := ""
+			if len(args) == 1 {
+				pipeline = args[0]
+			}
+			return runTrigger(configPath, pipeline)
 		},
 	}
 
@@ -38,7 +49,7 @@ flowerpot trigger -c path/to/flowerpot.yaml`,
 	return cmd
 }
 
-func runTrigger(configPath string) error {
+func runTrigger(configPath, pipeline string) error {
 	fmt.Print(cmdHeader("trigger"))
 
 	_, projectDir, err := loadAndValidate(configPath)
@@ -56,6 +67,9 @@ func runTrigger(configPath string) error {
 	}
 
 	url := fmt.Sprintf("http://127.0.0.1:%d/trigger", port)
+	if pipeline != "" {
+		url = fmt.Sprintf("http://127.0.0.1:%d/trigger/%s", port, pipeline)
+	}
 	resp, err := http.Post(url, "application/json", nil)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, styleFail.Render(fmt.Sprintf("  %s cannot reach daemon: %s", iconFail, err)))
@@ -67,6 +81,8 @@ func runTrigger(configPath string) error {
 	var result struct {
 		DagRunID string `json:"dag_run_id"`
 		Status   string `json:"status"`
+		Pipeline string `json:"pipeline,omitempty"`
+		Scope    string `json:"scope,omitempty"`
 		Error    string `json:"error,omitempty"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -82,15 +98,23 @@ func runTrigger(configPath string) error {
 		fmt.Println()
 		return errRunFailed
 	} else {
-		fmt.Println(stylePass.Render(fmt.Sprintf("  %s triggered DAG run %s", iconPass, result.DagRunID[:8])))
+		label := "triggered DAG run"
+		if result.Pipeline != "" {
+			label = fmt.Sprintf("triggered %s", result.Pipeline)
+			if result.Scope == "pipeline" {
+				label += " (single pipeline)"
+			} else {
+				label += " (with upstream)"
+			}
+		}
+		fmt.Println(stylePass.Render(fmt.Sprintf("  %s %s %s", iconPass, label, result.DagRunID[:8])))
 	}
 
 	fmt.Println()
 	return nil
 }
 
-// healthHandler returns a simple JSON health check.
-func healthHandler(store *state.Store) http.HandlerFunc {
+func healthHandler(store *state.Store, startedAt time.Time) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hasRunning, _ := store.HasRunningRun()
 		w.Header().Set("Content-Type", "application/json")
@@ -98,14 +122,15 @@ func healthHandler(store *state.Store) http.HandlerFunc {
 		if hasRunning {
 			status = "running"
 		}
+		uptime := time.Since(startedAt).Truncate(time.Second).String()
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status": status,
+			"uptime": uptime,
 		})
 	}
 }
 
-// pipelineTriggerHandler handles POST /trigger/<pipeline> to trigger a single pipeline or subgraph.
-func pipelineTriggerHandler(cfg *config.Config, store *state.Store, projectDir string, logger *slog.Logger) http.HandlerFunc {
+func pipelineTriggerHandler(cfg *config.Config, store *state.Store, projectDir string, logger *slog.Logger, runCtx context.Context, wg *sync.WaitGroup) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		pipelineName := r.URL.Path[len("/trigger/"):]
 		if pipelineName == "" {
@@ -203,7 +228,9 @@ func pipelineTriggerHandler(cfg *config.Config, store *state.Store, projectDir s
 			maxWorkers = 4
 		}
 
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			dagRunner := &runner.DAGRunner{
 				Store:      store,
 				Config:     cfg,
@@ -213,7 +240,7 @@ func pipelineTriggerHandler(cfg *config.Config, store *state.Store, projectDir s
 				MaxWorkers: maxWorkers,
 				Deps:       subDeps,
 			}
-			status, runErr := dagRunner.Run(context.Background())
+			status, runErr := dagRunner.Run(runCtx)
 			if runErr != nil {
 				logger.Error("triggered pipeline run failed", "pipeline", pipelineName, "dag_run_id", dagRunID[:8], "error", runErr)
 			} else {
@@ -232,8 +259,7 @@ func pipelineTriggerHandler(cfg *config.Config, store *state.Store, projectDir s
 	}
 }
 
-// triggerHandler creates and runs a DAG run in a background goroutine.
-func triggerHandler(cfg *config.Config, store *state.Store, projectDir string, logger *slog.Logger) http.HandlerFunc {
+func triggerHandler(cfg *config.Config, store *state.Store, projectDir string, logger *slog.Logger, runCtx context.Context, wg *sync.WaitGroup) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hasRunning, err := store.HasRunningRun()
 		if err != nil {
@@ -288,7 +314,9 @@ func triggerHandler(cfg *config.Config, store *state.Store, projectDir string, l
 			maxWorkers = 4
 		}
 
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			dagRunner := &runner.DAGRunner{
 				Store:      store,
 				Config:     cfg,
@@ -298,7 +326,7 @@ func triggerHandler(cfg *config.Config, store *state.Store, projectDir string, l
 				MaxWorkers: maxWorkers,
 				Deps:       deps,
 			}
-			status, runErr := dagRunner.Run(context.Background())
+			status, runErr := dagRunner.Run(runCtx)
 			if runErr != nil {
 				logger.Error("triggered DAG run failed", "dag_run_id", dagRunID[:8], "error", runErr)
 			} else {
@@ -310,6 +338,135 @@ func triggerHandler(cfg *config.Config, store *state.Store, projectDir string, l
 		w.WriteHeader(http.StatusAccepted)
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"dag_run_id": dagRunID,
+			"status":     "accepted",
+		})
+	}
+}
+
+// retryHTTPHandler handles POST /retry/<dag-run-id> to retry a failed run via the daemon.
+func retryHTTPHandler(cfg *config.Config, store *state.Store, projectDir string, logger *slog.Logger, runCtx context.Context, wg *sync.WaitGroup) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		runPrefix := r.URL.Path[len("/retry/"):]
+		if runPrefix == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "dag-run-id required"})
+			return
+		}
+
+		originalRun, err := store.FindDAGRunByPrefix(runPrefix)
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("run %q not found: %s", runPrefix, err)})
+			return
+		}
+		if originalRun.Status == "running" {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "run is still in progress"})
+			return
+		}
+
+		hasRunning, _ := store.HasRunningRun()
+		if hasRunning {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "a DAG run is already in progress"})
+			return
+		}
+
+		originalTasks, err := store.TasksByRun(originalRun.ID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		deps := cfg.DAGGraph()
+		retryRunID := uuid.New().String()
+		now := time.Now().UTC().Format(time.RFC3339)
+
+		if err := store.InsertDAGRun(&state.DAGRun{
+			ID:            retryRunID,
+			TriggerSource: "retry",
+			StartedAt:     now,
+			Status:        "running",
+			RetryOf:       originalRun.ID,
+		}); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		pendingSet := make(map[string]bool)
+		for _, t := range originalTasks {
+			if t.Status == "failed" || t.Status == "skipped" {
+				pendingSet[t.Pipeline] = true
+			}
+		}
+		fwd := runner.ForwardGraph(deps)
+		changed := true
+		for changed {
+			changed = false
+			for p := range pendingSet {
+				for _, child := range fwd[p] {
+					if !pendingSet[child] {
+						pendingSet[child] = true
+						changed = true
+					}
+				}
+			}
+		}
+
+		for name := range cfg.Pipelines {
+			taskID := uuid.New().String()
+			status := "skipped_on_retry"
+			if pendingSet[name] {
+				status = "pending"
+			}
+			_ = store.InsertTask(&state.Task{
+				ID:       taskID,
+				DAGRunID: retryRunID,
+				Pipeline: name,
+				Status:   status,
+				Attempt:  1,
+			})
+		}
+
+		logDir, err := logs.CreateLogDir(projectDir, retryRunID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		maxWorkers := cfg.MaxConcurrent
+		if maxWorkers <= 0 {
+			maxWorkers = 4
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dagRunner := &runner.DAGRunner{
+				Store:      store,
+				Config:     cfg,
+				ProjectDir: projectDir,
+				DagRunID:   retryRunID,
+				LogDir:     logDir,
+				MaxWorkers: maxWorkers,
+				Deps:       deps,
+			}
+			status, runErr := dagRunner.Run(runCtx)
+			if runErr != nil {
+				logger.Error("retry run failed", "dag_run_id", retryRunID[:8], "retry_of", originalRun.ID[:8], "error", runErr)
+			} else {
+				logger.Info("retry run finished", "dag_run_id", retryRunID[:8], "retry_of", originalRun.ID[:8], "status", status)
+			}
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"dag_run_id": retryRunID,
+			"retry_of":   originalRun.ID,
 			"status":     "accepted",
 		})
 	}
