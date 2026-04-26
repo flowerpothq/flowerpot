@@ -87,6 +87,7 @@ func runServe(configPath string, port int) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler(store))
 	mux.HandleFunc("POST /trigger", triggerHandler(result.Config, store, projectDir, logger))
+	mux.HandleFunc("POST /trigger/", pipelineTriggerHandler(result.Config, store, projectDir, logger))
 
 	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 	if err != nil {
@@ -113,6 +114,34 @@ func runServe(configPath string, port int) error {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	_ = srv.Shutdown(shutdownCtx)
+
+	grace := 30 * time.Second
+	if result.Config.ShutdownGrace != "" {
+		if d, parseErr := time.ParseDuration(result.Config.ShutdownGrace); parseErr == nil && d > 0 {
+			grace = d
+		}
+	}
+
+	if sched.IsRunInProgress() {
+		logger.Info("waiting for running DAG to finish", "grace", grace.String())
+		deadline := time.After(grace)
+		ticker := time.NewTicker(200 * time.Millisecond)
+		defer ticker.Stop()
+	waitLoop:
+		for {
+			select {
+			case <-deadline:
+				logger.Warn("grace period expired, cancelling running DAG")
+				sched.CancelRunningDAG()
+				time.Sleep(2 * time.Second)
+				break waitLoop
+			case <-ticker.C:
+				if !sched.IsRunInProgress() {
+					break waitLoop
+				}
+			}
+		}
+	}
 
 	_ = os.Remove(pidFile)
 	logger.Info("shutdown complete")

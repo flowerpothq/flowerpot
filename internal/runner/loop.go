@@ -218,7 +218,8 @@ func filterReady(tasks []state.Task, deps map[string][]string) []state.Task {
 		upstreams := deps[t.Pipeline]
 		blocked := false
 		for _, dep := range upstreams {
-			if statusMap[dep] != "completed" {
+			s := statusMap[dep]
+			if s != "completed" && s != "skipped_on_retry" {
 				blocked = true
 				break
 			}

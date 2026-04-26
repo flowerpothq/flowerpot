@@ -11,7 +11,7 @@ import (
 
 	"github.com/flowerpothq/flowerpot/internal/config"
 	"github.com/flowerpothq/flowerpot/internal/logs"
-	"github.com/flowerpothq/flowerpot/internal/runner"
+	runner "github.com/flowerpothq/flowerpot/internal/runner"
 	"github.com/flowerpothq/flowerpot/internal/state"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -100,6 +100,134 @@ func healthHandler(store *state.Store) http.HandlerFunc {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]string{
 			"status": status,
+		})
+	}
+}
+
+// pipelineTriggerHandler handles POST /trigger/<pipeline> to trigger a single pipeline or subgraph.
+func pipelineTriggerHandler(cfg *config.Config, store *state.Store, projectDir string, logger *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		pipelineName := r.URL.Path[len("/trigger/"):]
+		if pipelineName == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "pipeline name required"})
+			return
+		}
+
+		if _, ok := cfg.Pipelines[pipelineName]; !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("pipeline %q not found", pipelineName)})
+			return
+		}
+
+		hasRunning, err := store.HasRunningRun()
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		if hasRunning {
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{
+				"status": "skipped",
+				"error":  "a DAG run is already in progress",
+			})
+			return
+		}
+
+		scope := r.URL.Query().Get("scope")
+		if scope == "" {
+			scope = "dag"
+		}
+
+		dagRunID := uuid.New().String()
+		now := time.Now().UTC().Format(time.RFC3339)
+
+		if err := store.InsertDAGRun(&state.DAGRun{
+			ID:            dagRunID,
+			TriggerSource: "http",
+			StartedAt:     now,
+			Status:        "running",
+		}); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		deps := cfg.DAGGraph()
+		var pipelineSet map[string]bool
+		var subDeps map[string][]string
+
+		if scope == "pipeline" {
+			pipelineSet = map[string]bool{pipelineName: true}
+			subDeps = map[string][]string{pipelineName: nil}
+		} else {
+			upstreams := runner.UpstreamOf(pipelineName, deps)
+			pipelineSet = make(map[string]bool, len(upstreams)+1)
+			pipelineSet[pipelineName] = true
+			for _, u := range upstreams {
+				pipelineSet[u] = true
+			}
+			subDeps = make(map[string][]string, len(pipelineSet))
+			for p := range pipelineSet {
+				var relevant []string
+				for _, dep := range deps[p] {
+					if pipelineSet[dep] {
+						relevant = append(relevant, dep)
+					}
+				}
+				subDeps[p] = relevant
+			}
+		}
+
+		for name := range pipelineSet {
+			taskID := uuid.New().String()
+			_ = store.InsertTask(&state.Task{
+				ID:       taskID,
+				DAGRunID: dagRunID,
+				Pipeline: name,
+				Status:   "pending",
+				Attempt:  1,
+			})
+		}
+
+		logDir, err := logs.CreateLogDir(projectDir, dagRunID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+
+		maxWorkers := cfg.MaxConcurrent
+		if maxWorkers <= 0 {
+			maxWorkers = 4
+		}
+
+		go func() {
+			dagRunner := &runner.DAGRunner{
+				Store:      store,
+				Config:     cfg,
+				ProjectDir: projectDir,
+				DagRunID:   dagRunID,
+				LogDir:     logDir,
+				MaxWorkers: maxWorkers,
+				Deps:       subDeps,
+			}
+			status, runErr := dagRunner.Run(context.Background())
+			if runErr != nil {
+				logger.Error("triggered pipeline run failed", "pipeline", pipelineName, "dag_run_id", dagRunID[:8], "error", runErr)
+			} else {
+				logger.Info("triggered pipeline run finished", "pipeline", pipelineName, "dag_run_id", dagRunID[:8], "status", status)
+			}
+		}()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"dag_run_id": dagRunID,
+			"pipeline":   pipelineName,
+			"scope":      scope,
+			"status":     "accepted",
 		})
 	}
 }

@@ -124,6 +124,114 @@ func TestTriggerHTTP_CreatesDagRun(t *testing.T) {
 	}
 }
 
+func TestTriggerHTTP_SinglePipeline(t *testing.T) {
+	dir := t.TempDir()
+	content := `
+schedule: "0 0 1 1 *"
+timezone: "UTC"
+pipelines:
+  extract:
+    run: "echo extract"
+  transform:
+    run: "echo transform"
+    after: [extract]
+`
+	configPath := filepath.Join(dir, "flowerpot.yaml")
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	port := 19800 + (os.Getpid()+3)%1000
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runServe(configPath, port)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
+		if err == nil {
+			_ = resp.Body.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d/trigger/extract?scope=pipeline", port), "application/json", nil)
+	if err != nil {
+		t.Fatalf("trigger failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", resp.StatusCode)
+	}
+
+	var result map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	if result["pipeline"] != "extract" {
+		t.Fatalf("expected pipeline=extract, got %s", result["pipeline"])
+	}
+	if result["scope"] != "pipeline" {
+		t.Fatalf("expected scope=pipeline, got %s", result["scope"])
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	p, _ := os.FindProcess(os.Getpid())
+	_ = p.Signal(os.Interrupt)
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not shut down")
+	}
+}
+
+func TestTriggerHTTP_UnknownPipeline(t *testing.T) {
+	dir := t.TempDir()
+	configPath := writeServeTestYAML(t, dir)
+
+	port := 19800 + (os.Getpid()+4)%1000
+
+	done := make(chan error, 1)
+	go func() {
+		done <- runServe(configPath, port)
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
+		if err == nil {
+			_ = resp.Body.Close()
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	resp, err := http.Post(fmt.Sprintf("http://127.0.0.1:%d/trigger/nonexistent", port), "application/json", nil)
+	if err != nil {
+		t.Fatalf("trigger failed: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", resp.StatusCode)
+	}
+
+	p, _ := os.FindProcess(os.Getpid())
+	_ = p.Signal(os.Interrupt)
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not shut down")
+	}
+}
+
 func TestTriggerHTTP_Health(t *testing.T) {
 	dir := t.TempDir()
 	configPath := writeServeTestYAML(t, dir)
