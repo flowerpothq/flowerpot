@@ -69,9 +69,11 @@ pipelines:
 | `flowerpot run <pipeline>` | Run a single pipeline |
 | `flowerpot run <pipeline> --with-upstream` | Run with transitive dependencies |
 | `flowerpot serve` | Start the daemon (cron + HTTP trigger) |
-| `flowerpot trigger` | Trigger a DAG run via the running daemon |
+| `flowerpot trigger [pipeline]` | Trigger a DAG run via the running daemon |
 | `flowerpot status` | Show recent DAG runs |
-| `flowerpot logs [run-id] [pipeline]` | View pipeline logs |
+| `flowerpot logs [run-id] [pipeline]` | View pipeline logs (`-f` to follow, `--attempt N`) |
+| `flowerpot retry <run-id>` | Retry failed/skipped tasks from a previous run |
+| `flowerpot ui` | Open the interactive terminal UI dashboard |
 | `flowerpot version` | Print version info |
 
 All commands support `--json` for structured output where applicable.
@@ -132,6 +134,8 @@ overlap: skip                        # skip | queue | kill_previous (default: sk
 catchup: false                       # replay missed cron ticks (default: false)
 max_concurrent: 4                    # max parallel pipelines
 default_timeout: "1h"               # default per-pipeline timeout
+shutdown_grace: "2m"                # time to wait for pipelines on SIGTERM (default: 30s)
+log_retention: "168h"               # auto-delete old runs/logs after this duration
 default_retry:
   attempts: 1
   strategy: "fixed"
@@ -148,6 +152,14 @@ Flowerpot injects these into every pipeline execution:
 | `FLOWERPOT_DAG_RUN_ID` | UUID of the current DAG run |
 | `FLOWERPOT_LOGICAL_DATE` | UTC timestamp of the run |
 
+## Terminal UI
+
+Flowerpot includes an interactive terminal dashboard:
+
+```bash
+flowerpot ui
+```
+
 ## Why not Airflow?
 
 Airflow is powerful but heavy: Python environment, metadata database, scheduler process, webserver, worker processes. For a small data team with 5-20 pipelines, that's a lot of infrastructure.
@@ -159,7 +171,7 @@ Flowerpot is a single binary. Install it, write a YAML, run `flowerpot serve`. N
 ```bash
 make build                               # build to bin/flowerpot
 go build -o flowerpot ./cmd/flowerpot    # quick build
-go test ./...                            # run all tests
+go test ./...                            # run all tests (130 tests, 9 packages)
 go vet ./...                             # static analysis
 ```
 

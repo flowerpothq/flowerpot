@@ -424,6 +424,89 @@ func (s *Store) VacuumOldRuns(cutoff time.Time) (int, error) {
 	return int(n), nil
 }
 
+// PipelineSummary holds aggregated info about a pipeline's most recent task.
+type PipelineSummary struct {
+	Pipeline     string
+	LastStatus   string
+	LastRunAt    string
+	LastDuration string
+	RunCount     int
+}
+
+// PipelinesSummary returns per-pipeline summary data (latest status, last run time, run count).
+// Designed for the TUI pipeline list — one query instead of N+1.
+func (s *Store) PipelinesSummary() ([]PipelineSummary, error) {
+	rows, err := s.db.Query(`
+		SELECT t.pipeline,
+			t.status,
+			COALESCE(r.started_at, ''),
+			CASE WHEN r.ended_at != '' AND r.started_at != '' THEN r.ended_at ELSE '' END,
+			(SELECT COUNT(DISTINCT t2.dag_run_id) FROM tasks t2 WHERE t2.pipeline = t.pipeline)
+		FROM tasks t
+		JOIN dag_runs r ON r.id = t.dag_run_id
+		WHERE r.started_at = (
+			SELECT MAX(r2.started_at) FROM dag_runs r2
+			JOIN tasks t2 ON t2.dag_run_id = r2.id
+			WHERE t2.pipeline = t.pipeline
+		)
+		GROUP BY t.pipeline
+		ORDER BY t.pipeline`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var results []PipelineSummary
+	for rows.Next() {
+		var ps PipelineSummary
+		var endedAt string
+		if err := rows.Scan(&ps.Pipeline, &ps.LastStatus, &ps.LastRunAt, &endedAt, &ps.RunCount); err != nil {
+			return nil, err
+		}
+		if endedAt != "" && ps.LastRunAt != "" {
+			if s, e := parseTime(ps.LastRunAt), parseTime(endedAt); !s.IsZero() && !e.IsZero() {
+				ps.LastDuration = e.Sub(s).Truncate(time.Millisecond).String()
+			}
+		}
+		results = append(results, ps)
+	}
+	return results, rows.Err()
+}
+
+func parseTime(s string) time.Time {
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
+}
+
+// RunsForPipeline returns the last N DAG runs that contain a task for the given pipeline.
+func (s *Store) RunsForPipeline(pipeline string, limit int) ([]DAGRun, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT r.id, r.schedule_id, r.trigger_source, r.started_at, r.ended_at, r.status, r.retry_of
+		FROM dag_runs r
+		JOIN tasks t ON t.dag_run_id = r.id
+		WHERE t.pipeline = ?
+		ORDER BY r.started_at DESC
+		LIMIT ?`, pipeline, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var runs []DAGRun
+	for rows.Next() {
+		var r DAGRun
+		var scheduleID, endedAt, retryOf sql.NullString
+		if err := rows.Scan(&r.ID, &scheduleID, &r.TriggerSource, &r.StartedAt, &endedAt, &r.Status, &retryOf); err != nil {
+			return nil, err
+		}
+		r.ScheduleID = scheduleID.String
+		r.EndedAt = endedAt.String
+		r.RetryOf = retryOf.String
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}
+
 // IsWALEnabled checks if WAL journal mode is active.
 func (s *Store) IsWALEnabled() (bool, error) {
 	var mode string
