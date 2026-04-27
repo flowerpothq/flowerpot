@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +29,7 @@ func (m *logTailModel) setSize(w, h int) {
 	m.height = h
 	if m.ready {
 		m.vp.Width = w
-		m.vp.Height = h - 4
+		m.vp.Height = h
 	}
 }
 
@@ -64,7 +63,7 @@ func (m *logTailModel) refresh() {
 	m.content = b.String()
 
 	if !m.ready && m.width > 0 {
-		m.vp = viewport.New(m.width, m.height-4)
+		m.vp = viewport.New(m.width, m.height)
 		m.ready = true
 	}
 	if m.ready {
@@ -73,16 +72,20 @@ func (m *logTailModel) refresh() {
 }
 
 func (m *logTailModel) update(msg tea.Msg) tea.Cmd {
-	if msg, ok := msg.(tea.KeyMsg); ok {
-		switch msg.String() {
+	if kmsg, ok := msg.(tea.KeyMsg); ok {
+		switch kmsg.String() {
 		case "esc", "h":
 			m.back = true
 			return nil
 		case "G":
-			m.vp.GotoBottom()
+			if m.ready {
+				m.vp.GotoBottom()
+			}
 			return nil
 		case "g":
-			m.vp.GotoTop()
+			if m.ready {
+				m.vp.GotoTop()
+			}
 			return nil
 		}
 	}
@@ -94,22 +97,21 @@ func (m *logTailModel) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+func (m *logTailModel) hints() []keyHint {
+	return []keyHint{
+		{"↑↓", "Scroll"},
+		{"g/G", "Top/Bottom"},
+		{"esc", "Back"},
+		{"?", "Help"},
+		{"q", "Quit"},
+	}
+}
+
 func (m *logTailModel) view(width, height int) string {
-	var b strings.Builder
-	b.WriteString(styleHeader.Render("  Logs"))
-	b.WriteString("\n")
 	if m.ready {
-		b.WriteString(m.vp.View())
-	} else {
-		b.WriteString(m.content)
+		return m.vp.View()
 	}
-	b.WriteString("\n")
-	pct := ""
-	if m.ready {
-		pct = fmt.Sprintf(" %3.0f%%", m.vp.ScrollPercent()*100)
-	}
-	b.WriteString(styleDim.Render(fmt.Sprintf("  esc/h: back  ↑↓/PgUp/PgDn: scroll  g/G: top/bottom%s", pct)))
-	return b.String()
+	return m.content
 }
 
 func sanitize(name string) string {
