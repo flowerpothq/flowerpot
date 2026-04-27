@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/lipgloss"
+)
 
 var (
 	colorBrand = lipgloss.Color("#F48FB1")
@@ -14,24 +17,26 @@ var (
 	styleWarn  = lipgloss.NewStyle().Foreground(colorWarn)
 	styleDim   = lipgloss.NewStyle().Foreground(colorDim)
 	styleBrand = lipgloss.NewStyle().Foreground(colorBrand).Bold(true)
+	styleBold  = lipgloss.NewStyle().Bold(true)
 
-	styleStatusBar = lipgloss.NewStyle().
-			Background(lipgloss.Color("#333333")).
-			Foreground(lipgloss.Color("#CCCCCC")).
+	styleFlashOK  = lipgloss.NewStyle().Foreground(colorPass)
+	styleFlashErr = lipgloss.NewStyle().Foreground(colorFail)
+
+	styleHeaderBar = lipgloss.NewStyle().
+			Bold(true).
 			Padding(0, 1)
 
-	styleHeader = lipgloss.NewStyle().
-			Foreground(colorBrand).
-			Bold(true).
-			Padding(0, 0, 1, 0)
+	styleKeyBar = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#CCCCCC")).
+			Background(lipgloss.Color("#333333")).
+			Padding(0, 1)
 
-	styleCursor = lipgloss.NewStyle().
+	styleKeyHint = lipgloss.NewStyle().
 			Foreground(colorBrand).
 			Bold(true)
 
-	styleSelected = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#FFFFFF")).
-			Bold(true)
+	styleKeyLabel = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#CCCCCC"))
 )
 
 const (
@@ -75,4 +80,20 @@ func statusStyle(status string) lipgloss.Style {
 	default:
 		return styleDim
 	}
+}
+
+func tableStyles() table.Styles {
+	s := table.DefaultStyles()
+	s.Header = s.Header.
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("#555555")).
+		BorderBottom(true).
+		Bold(true).
+		Foreground(colorBrand)
+	s.Selected = s.Selected.
+		Foreground(lipgloss.Color("#FFFFFF")).
+		Bold(true)
+	s.Cell = s.Cell.
+		Padding(0, 1)
+	return s
 }
