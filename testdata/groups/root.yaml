@@ -1,0 +1,13 @@
+schedule: "0 * * * *"
+
+pipelines:
+  etl:
+    config: etl.yaml
+    metadata:
+      name: ETL Pipeline
+      tags: [daily]
+  ml:
+    config: ml.yaml
+    metadata:
+      name: ML Pipeline
+      tags: [event-driven]

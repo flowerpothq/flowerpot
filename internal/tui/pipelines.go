@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/flowerpothq/flowerpot/internal/config"
 	"github.com/flowerpothq/flowerpot/internal/state"
+	"github.com/robfig/cron/v3"
 )
 
 type pipelineListModel struct {
@@ -18,6 +19,8 @@ type pipelineListModel struct {
 	names      []string // ordered pipeline names (stable)
 	allRows    []table.Row
 	filter     string
+	hasGroups  bool
+	nextRun    string // precomputed from cron schedule
 	drillDown  bool
 	describe   bool
 	triggerOne bool
@@ -25,13 +28,27 @@ type pipelineListModel struct {
 }
 
 func newPipelineListModel(cfg *config.Config) pipelineListModel {
-	cols := []table.Column{
-		{Title: "NAME", Width: 18},
-		{Title: "STATUS", Width: 18},
-		{Title: "LAST RUN", Width: 11},
-		{Title: "DURATION", Width: 10},
-		{Title: "RUNS", Width: 5},
-		{Title: "AFTER", Width: 20},
+	hasGroups := len(cfg.Groups) > 0
+	var cols []table.Column
+	if hasGroups {
+		cols = []table.Column{
+			{Title: "GROUP", Width: 14},
+			{Title: "NAME", Width: 18},
+			{Title: "STATUS", Width: 18},
+			{Title: "LAST RUN", Width: 11},
+			{Title: "DURATION", Width: 10},
+			{Title: "NEXT RUN", Width: 14},
+			{Title: "AFTER", Width: 20},
+		}
+	} else {
+		cols = []table.Column{
+			{Title: "NAME", Width: 18},
+			{Title: "STATUS", Width: 18},
+			{Title: "LAST RUN", Width: 11},
+			{Title: "DURATION", Width: 10},
+			{Title: "NEXT RUN", Width: 14},
+			{Title: "AFTER", Width: 20},
+		}
 	}
 	t := table.New(table.WithColumns(cols), table.WithHeight(10), table.WithFocused(true))
 	t.SetStyles(tableStyles())
@@ -42,10 +59,61 @@ func newPipelineListModel(cfg *config.Config) pipelineListModel {
 	}
 	sort.Strings(names)
 
-	return pipelineListModel{table: t, cfg: cfg, names: names}
+	nextRun := computeNextRun(cfg.Schedule, cfg.Timezone)
+
+	return pipelineListModel{table: t, cfg: cfg, names: names, hasGroups: hasGroups, nextRun: nextRun}
+}
+
+func computeNextRun(schedule, tz string) string {
+	if schedule == "" {
+		return "-"
+	}
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	sched, err := parser.Parse(schedule)
+	if err != nil {
+		return "-"
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		loc = time.UTC
+	}
+	next := sched.Next(time.Now().In(loc))
+	return timeUntil(next)
+}
+
+func timeUntil(t time.Time) string {
+	d := time.Until(t)
+	if d < 0 {
+		return "overdue"
+	}
+	switch {
+	case d < time.Minute:
+		return "< 1m"
+	case d < time.Hour:
+		return fmt.Sprintf("in %dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		m := int(d.Minutes()) % 60
+		if m > 0 {
+			return fmt.Sprintf("in %dh%dm", h, m)
+		}
+		return fmt.Sprintf("in %dh", h)
+	default:
+		return fmt.Sprintf("in %dd", int(d.Hours()/24))
+	}
 }
 
 func (m *pipelineListModel) refresh(store *state.Store) {
+	groupForPipeline := make(map[string]string)
+	for _, g := range m.cfg.Groups {
+		prefix := g.Key + "."
+		for name := range m.cfg.Pipelines {
+			if strings.HasPrefix(name, prefix) {
+				groupForPipeline[name] = g.Key
+			}
+		}
+	}
+
 	summaryMap := make(map[string]state.PipelineSummary)
 	if ps, err := store.PipelinesSummary(); err == nil {
 		for _, p := range ps {
@@ -53,12 +121,14 @@ func (m *pipelineListModel) refresh(store *state.Store) {
 		}
 	}
 
+	m.nextRun = computeNextRun(m.cfg.Schedule, m.cfg.Timezone)
+
 	rows := make([]table.Row, 0, len(m.names))
 	for _, name := range m.names {
 		p := m.cfg.Pipelines[name]
 		summary, hasData := summaryMap[name]
 
-		var statusText, ago, dur, runs string
+		var statusText, ago, dur string
 		if hasData {
 			icon := statusIcon(summary.LastStatus)
 			st := statusStyle(summary.LastStatus)
@@ -72,12 +142,10 @@ func (m *pipelineListModel) refresh(store *state.Store) {
 			if dur == "" {
 				dur = "-"
 			}
-			runs = fmt.Sprintf("%d", summary.RunCount)
 		} else {
 			statusText = styleDim.Render(iconPending + " never run")
 			ago = "-"
 			dur = "-"
-			runs = "0"
 		}
 
 		after := "-"
@@ -85,7 +153,12 @@ func (m *pipelineListModel) refresh(store *state.Store) {
 			after = strings.Join(p.After, ", ")
 		}
 
-		rows = append(rows, table.Row{name, statusText, ago, dur, runs, after})
+		if m.hasGroups {
+			group := groupForPipeline[name]
+			rows = append(rows, table.Row{group, name, statusText, ago, dur, m.nextRun, after})
+		} else {
+			rows = append(rows, table.Row{name, statusText, ago, dur, m.nextRun, after})
+		}
 	}
 	m.allRows = rows
 	m.applyFilter()
@@ -113,6 +186,9 @@ func (m *pipelineListModel) selectedPipeline() string {
 	row := m.table.SelectedRow()
 	if row == nil {
 		return ""
+	}
+	if m.hasGroups {
+		return row[1]
 	}
 	return row[0]
 }

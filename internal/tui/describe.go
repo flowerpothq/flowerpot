@@ -36,6 +36,28 @@ func (m *describeModel) load(name string, cfg *config.Config) {
 	var b strings.Builder
 	b.WriteString(styleBrand.Render("Pipeline: ") + styleBold.Render(name) + "\n\n")
 
+	for _, g := range cfg.Groups {
+		if strings.HasPrefix(name, g.Key+".") {
+			b.WriteString(field("Group", g.Key))
+			if g.Metadata != nil {
+				if g.Metadata.Name != "" {
+					b.WriteString(field("Group Name", g.Metadata.Name))
+				}
+				if len(g.Metadata.Tags) > 0 {
+					b.WriteString(field("Tags", strings.Join(g.Metadata.Tags, ", ")))
+				}
+			}
+			b.WriteString(field("Source", g.Source))
+			b.WriteString("\n")
+			break
+		}
+	}
+
+	if cfg.Schedule != "" {
+		b.WriteString(field("Schedule", cfg.Schedule))
+		b.WriteString(field("Timezone", cfg.Timezone))
+	}
+
 	if p.Run != "" {
 		b.WriteString(field("Command", p.Run))
 	}

@@ -100,7 +100,7 @@ func (m *taskDetailModel) applyFilter() {
 
 func (m *taskDetailModel) selectedPipeline() string {
 	idx := m.table.Cursor()
-	if idx < len(m.items) {
+	if idx >= 0 && idx < len(m.items) {
 		return m.items[idx].Pipeline
 	}
 	return ""

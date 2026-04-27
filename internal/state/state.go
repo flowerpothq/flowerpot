@@ -437,20 +437,25 @@ type PipelineSummary struct {
 // Designed for the TUI pipeline list — one query instead of N+1.
 func (s *Store) PipelinesSummary() ([]PipelineSummary, error) {
 	rows, err := s.db.Query(`
-		SELECT t.pipeline,
-			t.status,
-			COALESCE(r.started_at, ''),
-			CASE WHEN r.ended_at != '' AND r.started_at != '' THEN r.ended_at ELSE '' END,
-			(SELECT COUNT(DISTINCT t2.dag_run_id) FROM tasks t2 WHERE t2.pipeline = t.pipeline)
-		FROM tasks t
-		JOIN dag_runs r ON r.id = t.dag_run_id
-		WHERE r.started_at = (
-			SELECT MAX(r2.started_at) FROM dag_runs r2
-			JOIN tasks t2 ON t2.dag_run_id = r2.id
-			WHERE t2.pipeline = t.pipeline
+		WITH ranked AS (
+			SELECT t.pipeline,
+				t.status,
+				r.started_at AS run_started,
+				t.started_at AS task_started,
+				t.ended_at   AS task_ended,
+				ROW_NUMBER() OVER (PARTITION BY t.pipeline ORDER BY r.started_at DESC, t.ended_at DESC) AS rn
+			FROM tasks t
+			JOIN dag_runs r ON r.id = t.dag_run_id
 		)
-		GROUP BY t.pipeline
-		ORDER BY t.pipeline`)
+		SELECT pipeline,
+			status,
+			COALESCE(run_started, ''),
+			COALESCE(task_started, ''),
+			CASE WHEN task_ended != '' AND task_started != '' THEN task_ended ELSE '' END,
+			(SELECT COUNT(DISTINCT t2.dag_run_id) FROM tasks t2 WHERE t2.pipeline = ranked.pipeline)
+		FROM ranked
+		WHERE rn = 1
+		ORDER BY pipeline`)
 	if err != nil {
 		return nil, err
 	}
@@ -459,12 +464,12 @@ func (s *Store) PipelinesSummary() ([]PipelineSummary, error) {
 	var results []PipelineSummary
 	for rows.Next() {
 		var ps PipelineSummary
-		var endedAt string
-		if err := rows.Scan(&ps.Pipeline, &ps.LastStatus, &ps.LastRunAt, &endedAt, &ps.RunCount); err != nil {
+		var taskStarted, taskEnded string
+		if err := rows.Scan(&ps.Pipeline, &ps.LastStatus, &ps.LastRunAt, &taskStarted, &taskEnded, &ps.RunCount); err != nil {
 			return nil, err
 		}
-		if endedAt != "" && ps.LastRunAt != "" {
-			if s, e := parseTime(ps.LastRunAt), parseTime(endedAt); !s.IsZero() && !e.IsZero() {
+		if taskStarted != "" && taskEnded != "" {
+			if s, e := parseTime(taskStarted), parseTime(taskEnded); !s.IsZero() && !e.IsZero() {
 				ps.LastDuration = e.Sub(s).Truncate(time.Millisecond).String()
 			}
 		}
@@ -505,6 +510,39 @@ func (s *Store) RunsForPipeline(pipeline string, limit int) ([]DAGRun, error) {
 		runs = append(runs, r)
 	}
 	return runs, rows.Err()
+}
+
+// RecentFailedTasks returns tasks that transitioned to "failed" within the last N seconds.
+func (s *Store) RecentFailedTasks(withinSeconds int) ([]Task, error) {
+	rows, err := s.db.Query(`
+		SELECT t.id, t.dag_run_id, t.pipeline, t.status, t.attempt, t.exit_code, t.started_at, t.ended_at
+		FROM tasks t
+		WHERE t.status = 'failed'
+		  AND t.ended_at != ''
+		  AND t.ended_at >= datetime('now', '-' || ? || ' seconds')
+		ORDER BY t.ended_at DESC`, withinSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var tasks []Task
+	for rows.Next() {
+		var t Task
+		var exitCode sql.NullInt64
+		var startedAt, endedAt sql.NullString
+		if err := rows.Scan(&t.ID, &t.DAGRunID, &t.Pipeline, &t.Status, &t.Attempt, &exitCode, &startedAt, &endedAt); err != nil {
+			return nil, err
+		}
+		if exitCode.Valid {
+			v := int(exitCode.Int64)
+			t.ExitCode = &v
+		}
+		t.StartedAt = startedAt.String
+		t.EndedAt = endedAt.String
+		tasks = append(tasks, t)
+	}
+	return tasks, rows.Err()
 }
 
 // IsWALEnabled checks if WAL journal mode is active.

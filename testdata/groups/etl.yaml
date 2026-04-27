@@ -1,0 +1,9 @@
+pipelines:
+  extract:
+    run: "echo extract"
+  transform:
+    run: "echo transform"
+    after: [extract]
+  load:
+    run: "echo load"
+    after: [transform]

@@ -422,3 +422,102 @@ func TestRunsForPipeline(t *testing.T) {
 		t.Fatalf("expected 3 runs, got %d", len(runs))
 	}
 }
+
+func testGroupConfig() *config.Config {
+	return &config.Config{
+		Schedule: "0 0 1 1 *",
+		Timezone: "UTC",
+		Overlap:  "skip",
+		Pipelines: map[string]*config.Pipeline{
+			"etl.extract":   {Run: "echo extract"},
+			"etl.transform": {Run: "echo transform", After: []string{"etl.extract"}},
+			"etl.load":      {Run: "echo load", After: []string{"etl.transform"}},
+			"ml.train":      {Run: "echo train", After: []string{"etl.load"}},
+			"ml.predict":    {Run: "echo predict", After: []string{"ml.train"}},
+		},
+		Groups: []config.PipelineGroup{
+			{
+				Key:      "etl",
+				Metadata: &config.PipelineMetadata{Name: "ETL Pipeline", Tags: []string{"daily"}},
+				Source:   "/tmp/etl.yaml",
+			},
+			{
+				Key:      "ml",
+				Metadata: &config.PipelineMetadata{Name: "ML Pipeline", Tags: []string{"event-driven"}},
+				Source:   "/tmp/ml.yaml",
+			},
+		},
+	}
+}
+
+func TestModel_GroupedPipelineList(t *testing.T) {
+	store, dir := tempStore(t)
+	cfg := testGroupConfig()
+	insertRun(t, store, "run-001", "manual", "completed", []string{"etl.extract", "etl.transform", "etl.load", "ml.train", "ml.predict"})
+
+	m := NewModel(store, cfg, nil, dir)
+	var model tea.Model = m
+
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	model, _ = model.Update(tickMsg{})
+
+	cast := model.(Model)
+	rows := cast.pipelines.table.Rows()
+	if len(rows) != 5 {
+		t.Fatalf("expected 5 pipeline rows, got %d", len(rows))
+	}
+
+	if !cast.pipelines.hasGroups {
+		t.Fatal("expected hasGroups=true for grouped config")
+	}
+
+	// GROUP column should be first; NAME should be second
+	if rows[0][0] != "etl" {
+		t.Fatalf("expected first row GROUP='etl', got %q", rows[0][0])
+	}
+	if rows[0][1] != "etl.extract" {
+		t.Fatalf("expected first row NAME='etl.extract', got %q", rows[0][1])
+	}
+
+	// Filter by "ml" should return only ml pipelines
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
+	for _, r := range "ml" {
+		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	cast = model.(Model)
+	filteredRows := cast.pipelines.table.Rows()
+	if len(filteredRows) != 2 {
+		t.Fatalf("expected 2 filtered rows for 'ml', got %d", len(filteredRows))
+	}
+}
+
+func TestModel_GroupedDescribe(t *testing.T) {
+	store, dir := tempStore(t)
+	cfg := testGroupConfig()
+	insertRun(t, store, "run-001", "manual", "completed", []string{"etl.extract"})
+
+	m := NewModel(store, cfg, nil, dir)
+	var model tea.Model = m
+
+	model, _ = model.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	model, _ = model.Update(tickMsg{})
+
+	// Press d to describe the first pipeline (etl.extract)
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	cast := model.(Model)
+	if cast.currentView != viewDescribe {
+		t.Fatalf("expected viewDescribe, got %d", cast.currentView)
+	}
+
+	v := cast.View()
+	if !strings.Contains(v, "Group") {
+		t.Fatal("describe view should contain Group metadata for grouped pipeline")
+	}
+	if !strings.Contains(v, "ETL Pipeline") {
+		t.Fatal("describe view should contain group metadata name 'ETL Pipeline'")
+	}
+	if !strings.Contains(v, "daily") {
+		t.Fatal("describe view should contain tag 'daily'")
+	}
+}
