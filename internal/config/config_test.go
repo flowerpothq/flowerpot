@@ -2,8 +2,11 @@ package config
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/flowerpothq/flowerpot/internal/dag"
 )
 
 func testdataPath(name string) string {
@@ -283,5 +286,129 @@ func TestParse_SqlFileExists(t *testing.T) {
 		if strings.Contains(e.Message, "sql file") && strings.Contains(e.Message, "not found") {
 			t.Fatalf("SQL files should exist, got error: %v", e)
 		}
+	}
+}
+
+func TestGroups_BasicExpansion(t *testing.T) {
+	result, err := Load(testdataPath(filepath.Join("groups", "root.yaml")))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("expected no validation errors, got: %v", result.Errors)
+	}
+	cfg := result.Config
+
+	if len(cfg.Pipelines) != 5 {
+		names := make([]string, 0, len(cfg.Pipelines))
+		for n := range cfg.Pipelines {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		t.Fatalf("expected 5 pipelines, got %d: %v", len(cfg.Pipelines), names)
+	}
+
+	if p := cfg.Pipelines["etl.extract"]; p == nil {
+		t.Fatal("expected pipeline etl.extract")
+	} else if p.Run != "echo extract" {
+		t.Fatalf("expected run 'echo extract', got %q", p.Run)
+	}
+
+	if p := cfg.Pipelines["etl.transform"]; p == nil {
+		t.Fatal("expected pipeline etl.transform")
+	} else if len(p.After) != 1 || p.After[0] != "etl.extract" {
+		t.Fatalf("expected after [etl.extract], got %v", p.After)
+	}
+
+	if p := cfg.Pipelines["ml.train"]; p == nil {
+		t.Fatal("expected pipeline ml.train")
+	} else if len(p.After) != 1 || p.After[0] != "etl.load" {
+		t.Fatalf("expected after [etl.load] (cross-group), got %v", p.After)
+	}
+
+	if len(cfg.Groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(cfg.Groups))
+	}
+	if cfg.Groups[0].Key != "etl" {
+		t.Fatalf("expected first group key 'etl', got %q", cfg.Groups[0].Key)
+	}
+	if cfg.Groups[0].Metadata == nil || cfg.Groups[0].Metadata.Name != "ETL Pipeline" {
+		t.Fatal("expected group metadata name 'ETL Pipeline'")
+	}
+}
+
+func TestGroups_DAGGraphFlat(t *testing.T) {
+	result, err := Load(testdataPath(filepath.Join("groups", "root.yaml")))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("unexpected validation errors: %v", result.Errors)
+	}
+
+	g := result.Config.DAGGraph()
+	if len(g) != 5 {
+		t.Fatalf("expected 5 entries in DAG graph, got %d", len(g))
+	}
+
+	order, err := dag.TopoSort(dag.Graph(g))
+	if err != nil {
+		t.Fatalf("expected no cycle, got: %v", err)
+	}
+	if len(order) != 5 {
+		t.Fatalf("expected 5 nodes in topo order, got %d", len(order))
+	}
+}
+
+func TestGroups_ErrorConfigAndRun(t *testing.T) {
+	_, err := Load(testdataPath("groups_error_config_and_run.yaml"))
+	if err == nil {
+		t.Fatal("expected error for config + run on same pipeline")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Fatalf("expected 'mutually exclusive' in error, got: %v", err)
+	}
+}
+
+func TestGroups_ErrorMissingFile(t *testing.T) {
+	_, err := Load(testdataPath("groups_error_missing_file.yaml"))
+	if err == nil {
+		t.Fatal("expected error for missing sub-config file")
+	}
+	if !strings.Contains(err.Error(), "nonexistent.yaml") {
+		t.Fatalf("expected file name in error, got: %v", err)
+	}
+}
+
+func TestGroups_ErrorCollision(t *testing.T) {
+	_, err := Load(testdataPath("groups_error_collision.yaml"))
+	if err == nil {
+		t.Fatal("expected error for duplicate qualified name")
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("expected 'duplicate' in error, got: %v", err)
+	}
+}
+
+func TestGroups_ErrorNested(t *testing.T) {
+	_, err := Load(testdataPath("groups_error_nested.yaml"))
+	if err == nil {
+		t.Fatal("expected error for nested group config")
+	}
+	if !strings.Contains(err.Error(), "nested") {
+		t.Fatalf("expected 'nested' in error, got: %v", err)
+	}
+}
+
+func TestGroups_BackwardCompatible(t *testing.T) {
+	result, err := Load(testdataPath("valid_minimal.yaml"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.HasErrors() {
+		t.Fatalf("expected no errors, got: %v", result.Errors)
+	}
+	if len(result.Config.Groups) != 0 {
+		t.Fatalf("expected 0 groups for single-file config, got %d", len(result.Config.Groups))
 	}
 }

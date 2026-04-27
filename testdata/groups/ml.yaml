@@ -1,0 +1,7 @@
+pipelines:
+  train:
+    run: "echo train"
+    after: [etl.load]
+  predict:
+    run: "echo predict"
+    after: [train]

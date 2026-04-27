@@ -51,6 +51,8 @@ type Model struct {
 	filterInput textinput.Model
 	filterText  string
 
+	seenFailures map[string]struct{} // task IDs already flashed
+
 	pipelines pipelineListModel
 	runs      runHistoryModel
 	tasks     taskDetailModel
@@ -65,17 +67,18 @@ func NewModel(store *state.Store, cfg *config.Config, d *daemon.Daemon, projectD
 	ti.PromptStyle = styleBrand
 	ti.CharLimit = 64
 	return Model{
-		store:       store,
-		cfg:         cfg,
-		daemon:      d,
-		projectDir:  projectDir,
-		currentView: viewPipelineList,
-		filterInput: ti,
-		pipelines:   newPipelineListModel(cfg),
-		runs:        newRunHistoryModel(),
-		tasks:       newTaskDetailModel(),
-		logTail:     newLogTailModel(),
-		describe:    newDescribeModel(),
+		store:        store,
+		cfg:          cfg,
+		daemon:       d,
+		projectDir:   projectDir,
+		currentView:  viewPipelineList,
+		filterInput:  ti,
+		seenFailures: make(map[string]struct{}),
+		pipelines:    newPipelineListModel(cfg),
+		runs:         newRunHistoryModel(),
+		tasks:        newTaskDetailModel(),
+		logTail:      newLogTailModel(),
+		describe:     newDescribeModel(),
 	}
 }
 
@@ -151,6 +154,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case viewLogTail:
 			m.logTail.refresh()
 		}
+
+		m.checkRecentFailures()
 		return m, tea.Batch(cmds...)
 	}
 
@@ -278,6 +283,25 @@ func (m *Model) applyFilter() {
 	case viewTaskDetail:
 		m.tasks.filter = m.filterText
 		m.tasks.applyFilter()
+	}
+}
+
+func (m *Model) checkRecentFailures() {
+	tasks, err := m.store.RecentFailedTasks(5)
+	if err != nil || len(tasks) == 0 {
+		return
+	}
+	for _, t := range tasks {
+		if _, seen := m.seenFailures[t.ID]; seen {
+			continue
+		}
+		m.seenFailures[t.ID] = struct{}{}
+		exitInfo := ""
+		if t.ExitCode != nil {
+			exitInfo = fmt.Sprintf(" (exit %d)", *t.ExitCode)
+		}
+		m.setFlash(fmt.Sprintf("%s %s failed%s", iconFail, t.Pipeline, exitInfo), false)
+		return
 	}
 }
 

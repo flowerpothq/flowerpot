@@ -1,0 +1,8 @@
+schedule: "0 * * * *"
+
+pipelines:
+  etl:
+    config: groups/etl.yaml
+
+  etl.extract:
+    run: "echo collision"

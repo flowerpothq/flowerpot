@@ -49,7 +49,11 @@ func runValidate(cmd *cobra.Command, args []string) error {
 			fmt.Fprintln(os.Stderr, styleFail.Render("  "+iconFail+" "+e.Error()))
 		}
 	} else {
-		fmt.Println(stylePass.Render("  " + iconPass + " Schema valid"))
+		schemaMsg := "  " + iconPass + " Schema valid"
+		if ng := len(result.Config.Groups); ng > 0 {
+			schemaMsg += fmt.Sprintf(" (%d pipeline group(s) expanded)", ng)
+		}
+		fmt.Println(stylePass.Render(schemaMsg))
 	}
 
 	g := dag.Graph(result.Config.DAGGraph())

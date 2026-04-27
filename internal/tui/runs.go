@@ -112,7 +112,7 @@ func (m *runHistoryModel) applyFilter() {
 
 func (m *runHistoryModel) selectedRunID() string {
 	idx := m.table.Cursor()
-	if idx < len(m.items) {
+	if idx >= 0 && idx < len(m.items) {
 		return m.items[idx].ID
 	}
 	return ""
